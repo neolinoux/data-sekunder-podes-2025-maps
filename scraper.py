@@ -139,32 +139,48 @@ class GoogleMapsScraper:
             return True
 
     def force_click_element(self, element, item_index):
-        """Force click element dengan berbagai metode"""
+        """Force click element dengan berbagai metode dan timing yang lebih natural"""
         clicked = False
         
         print(f"🎯 Mencoba force click pada item {item_index}...")
         
+        # Delay sebelum force click
+        pre_click_delay = random.uniform(1.0, 2.0)
+        print(f"⏳ Pre-click delay ({pre_click_delay:.1f}s)...")
+        time.sleep(pre_click_delay)
+        
         # Metode 1: Scroll ke element dulu
         try:
             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-            time.sleep(0.5)
+            scroll_delay = random.uniform(1.5, 2.5)
+            print(f"📜 Scrolling to element ({scroll_delay:.1f}s)...")
+            time.sleep(scroll_delay)
         except:
             pass
         
-        # Metode 2: ActionChains dengan retry
+        # Metode 2: ActionChains dengan retry dan timing yang lebih natural
         for attempt in range(2):
             try:
-                ActionChains(self.driver).move_to_element(element).pause(0.2).click().perform()
+                # Hover dulu sebelum click
+                ActionChains(self.driver).move_to_element(element).perform()
+                hover_delay = random.uniform(0.8, 1.5)
+                time.sleep(hover_delay)
+                
+                # Lalu click dengan pause
+                ActionChains(self.driver).move_to_element(element).pause(0.5).click().perform()
                 clicked = True
                 print(f"✅ Force click berhasil dengan ActionChains (attempt {attempt + 1})")
                 break
             except Exception as e:
                 print(f"⚠️  ActionChains attempt {attempt + 1} gagal: {e}")
-                time.sleep(0.5)
+                retry_delay = random.uniform(1.0, 2.0)
+                time.sleep(retry_delay)
         
         # Metode 3: JavaScript click
         if not clicked:
             try:
+                # Small delay before JS click
+                time.sleep(random.uniform(0.5, 1.0))
                 self.driver.execute_script("arguments[0].click();", element)
                 clicked = True
                 print(f"✅ Force click berhasil dengan JavaScript")
@@ -179,7 +195,8 @@ class GoogleMapsScraper:
                 x = location['x'] + size['width'] // 2
                 y = location['y'] + size['height'] // 2
                 
-                ActionChains(self.driver).move_by_offset(x, y).click().perform()
+                # Move to coordinate then click
+                ActionChains(self.driver).move_by_offset(x, y).pause(0.5).click().perform()
                 clicked = True
                 print(f"✅ Force click berhasil dengan koordinat ({x}, {y})")
             except Exception as e:
@@ -189,11 +206,18 @@ class GoogleMapsScraper:
         if not clicked:
             try:
                 parent = element.find_element(By.XPATH, "..")
+                time.sleep(random.uniform(0.3, 0.8))
                 self.driver.execute_script("arguments[0].click();", parent)
                 clicked = True
                 print(f"✅ Force click berhasil pada parent element")
             except Exception as e:
                 print(f"⚠️  Parent click gagal: {e}")
+        
+        # Delay setelah click berhasil
+        if clicked:
+            post_click_delay = random.uniform(1.0, 2.0)
+            print(f"✅ Click berhasil, post-click delay ({post_click_delay:.1f}s)...")
+            time.sleep(post_click_delay)
         
         return clicked
 
@@ -585,8 +609,112 @@ class GoogleMapsScraper:
             print(f"⚠️  Error clean village name: {e}")
             return village_raw
 
+    def validate_data(self, data):
+        """Validasi data sebelum disimpan dengan penolakan untuk nama misleading"""
+        try:
+            # Cek field wajib
+            required_fields = ["nama", "kecamatan", "keyword"]
+            for field in required_fields:
+                if not data.get(field) or str(data[field]).strip() == "":
+                    print(f"❌ Field {field} kosong atau tidak valid")
+                    return False
+            
+            # Validasi nama tidak berisi karakter aneh atau kata misleading
+            nama = str(data["nama"]).strip()
+            if len(nama) < 2:
+                print(f"❌ Nama terlalu pendek: '{nama}'")
+                return False
+            
+            # Daftar kata yang tidak valid untuk nama
+            invalid_names = [
+                "Hasil", "Loading", "Memuat", "...", "", " ",
+                "Search", "Maps", "Google", "Location", "Place",
+                "Tempat", "Lokasi", "Cari", "Pencarian"
+            ]
+            
+            if nama in invalid_names:
+                print(f"❌ Nama tidak valid (misleading): '{nama}'")
+                return False
+            
+            # Validasi koordinat jika ada
+            if data.get("latitude") is not None and data.get("longitude") is not None:
+                try:
+                    lat = float(data["latitude"])
+                    lng = float(data["longitude"])
+                    # Validasi koordinat masuk akal untuk Indonesia
+                    if not (-11 <= lat <= 6 and 95 <= lng <= 141):
+                        print(f"❌ Koordinat tidak valid: {lat}, {lng}")
+                        return False
+                except (ValueError, TypeError):
+                    print(f"❌ Koordinat bukan angka valid: {data['latitude']}, {data['longitude']}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error validasi data: {e}")
+            return False
+
+    def is_comprehensive_duplicate(self, nama, kecamatan, desa, url):
+        """Cek duplikasi komprehensif berdasarkan nama, kecamatan, desa, dan URL"""
+        try:
+            # Normalisasi data untuk perbandingan
+            nama_clean = str(nama).strip().lower()
+            kecamatan_clean = str(kecamatan).strip().lower()
+            desa_clean = str(desa).strip().lower()
+            url_clean = str(url).strip() if url else ""
+            
+            # Cek di data manager
+            existing_data = self.data_manager.get_all_data()
+            
+            for existing in existing_data:
+                existing_nama = str(existing.get("nama", "")).strip().lower()
+                existing_kecamatan = str(existing.get("kecamatan", "")).strip().lower()
+                existing_desa = str(existing.get("desa", "")).strip().lower()
+                existing_url = str(existing.get("url", "")).strip()
+                
+                # Cek exact match untuk nama, kecamatan, dan desa
+                if (existing_nama == nama_clean and 
+                    existing_kecamatan == kecamatan_clean and 
+                    existing_desa == desa_clean):
+                    
+                    print(f"🔍 Duplikasi ditemukan berdasarkan nama-kecamatan-desa:")
+                    print(f"   Existing: {existing.get('nama')} | {existing.get('kecamatan')} | {existing.get('desa')}")
+                    print(f"   New: {nama} | {kecamatan} | {desa}")
+                    return True
+                
+                # Cek duplikasi berdasarkan URL yang sama (jika URL ada)
+                if url_clean and existing_url and url_clean == existing_url:
+                    print(f"🔍 Duplikasi ditemukan berdasarkan URL:")
+                    print(f"   Existing: {existing.get('nama')} - {existing_url}")
+                    print(f"   New: {nama} - {url_clean}")
+                    return True
+                
+                # Cek duplikasi berdasarkan nama yang sama di lokasi yang sama
+                if (existing_nama == nama_clean and 
+                    existing_kecamatan == kecamatan_clean):
+                    
+                    # Jika desa berbeda tapi nama sama di kecamatan yang sama, beri peringatan
+                    if existing_desa != desa_clean:
+                        print(f"⚠️  Nama sama di kecamatan sama tapi desa berbeda:")
+                        print(f"   Existing: {existing.get('nama')} | {existing.get('desa')}")
+                        print(f"   New: {nama} | {desa}")
+                        # Tidak skip, karena mungkin cabang atau lokasi berbeda
+                        continue
+                    else:
+                        print(f"🔍 Duplikasi ditemukan berdasarkan nama-kecamatan:")
+                        print(f"   Existing: {existing.get('nama')} | {existing.get('kecamatan')}")
+                        print(f"   New: {nama} | {kecamatan}")
+                        return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"⚠️  Error cek duplikasi komprehensif: {e}")
+            return False
+
     async def extract_data_from_results(self, keyword, district):
-        """Extract data dengan improved click handling"""
+        """Extract data dengan improved click handling dan timing yang lebih natural"""
         extract_start_time = time.time()
         results = []
         processed_names = set()
@@ -608,6 +736,11 @@ class GoogleMapsScraper:
             for i, item in enumerate(result_items):
                 try:
                     print(f"\n🎯 Memproses item {i+1}/{len(result_items)}")
+                    
+                    # Delay sebelum memproses item (simulasi membaca daftar)
+                    reading_delay = random.uniform(1.5, 3.0)
+                    print(f"👀 Membaca item {i+1} ({reading_delay:.1f}s)...")
+                    time.sleep(reading_delay)
                     
                     # Check basic element validity
                     try:
@@ -633,7 +766,18 @@ class GoogleMapsScraper:
                         # Scroll item ke view dengan smooth scrolling
                         try:
                             self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", item)
-                            time.sleep(random.uniform(0.5, 1.0))
+                            scroll_wait = random.uniform(1.0, 2.0)
+                            print(f"📜 Scroll ke item {i+1} ({scroll_wait:.1f}s)...")
+                            time.sleep(scroll_wait)
+                        except:
+                            pass
+                        
+                        # Simulasi hover sebelum click (seperti manusia)
+                        try:
+                            ActionChains(self.driver).move_to_element(item).perform()
+                            hover_delay = random.uniform(0.8, 1.5)
+                            print(f"🖱️  Hover pada item {i+1} ({hover_delay:.1f}s)...")
+                            time.sleep(hover_delay)
                         except:
                             pass
                         
@@ -641,7 +785,7 @@ class GoogleMapsScraper:
                         
                         # Cara 1: ActionChains dengan hover dulu
                         try:
-                            ActionChains(self.driver).move_to_element(item).pause(0.3).click().perform()
+                            ActionChains(self.driver).move_to_element(item).pause(0.5).click().perform()
                             clicked = True
                             print(f"✅ Click berhasil dengan ActionChains pada item {i+1}")
                         except Exception as e:
@@ -665,10 +809,19 @@ class GoogleMapsScraper:
                         print(f"❌ Skip item {i+1}: Semua metode click gagal")
                         continue
                     
-                    # Wait dengan variasi delay setelah click untuk memuat detail
-                    wait_time = random.uniform(4.0, 6.0)
+                    # Wait lebih lama setelah click untuk memuat detail dengan variasi
+                    wait_time = random.uniform(5.0, 8.0)  # Increased wait time
                     print(f"⏳ Menunggu detail dimuat ({wait_time:.1f}s)...")
                     time.sleep(wait_time)
+                    
+                    # Simulasi scroll untuk memicu loading konten
+                    try:
+                        self.driver.execute_script("window.scrollBy(0, 100);")
+                        time.sleep(0.5)
+                        self.driver.execute_script("window.scrollBy(0, -100);")
+                        time.sleep(1.0)
+                    except:
+                        pass
                     
                     # Extract nama dengan retry mechanism
                     name = None
@@ -681,7 +834,11 @@ class GoogleMapsScraper:
                         if not name or name in ["Hasil", "Loading", "Memuat", "..."]:
                             retry_count += 1
                             print(f"⚠️  Retry extract nama {retry_count}/{max_retries}")
-                            time.sleep(2)
+                        
+                            # Wait lebih lama antar retry
+                            retry_wait = random.uniform(3.0, 5.0)
+                            print(f"⏳ Waiting for retry ({retry_wait:.1f}s)...")
+                            time.sleep(retry_wait)
                     
                     # Jika masih tidak dapat nama yang valid, gunakan fallback
                     if not name or name.strip() == "" or name in ["Hasil", "Loading", "Memuat", "..."]:
@@ -750,12 +907,24 @@ class GoogleMapsScraper:
                     else:
                         print(f"❌ Data tidak valid: {name}")
                     
-                    # Simulasi perilaku manusia
-                    if random.random() < 0.1:
+                    # Simulasi perilaku manusia lebih sering dan lebih lama
+                    if random.random() < 0.25:  # 25% chance (increased from 10%)
+                        human_delay = random.uniform(2.0, 5.0)
+                        print(f"🧑 Simulasi perilaku manusia ({human_delay:.1f}s)...")
+                        time.sleep(human_delay)
                         self.simulate_human_behavior()
+                    
+                    # Delay antar item untuk menghindari terlalu cepat
+                    inter_item_delay = random.uniform(2.0, 4.0)
+                    print(f"⏸️  Istirahat antar item ({inter_item_delay:.1f}s)...")
+                    time.sleep(inter_item_delay)
                     
                 except Exception as e:
                     print(f"⚠️  Error extract item {i+1}: {e}")
+                    # Delay juga saat error untuk menghindari spam
+                    error_delay = random.uniform(3.0, 5.0)
+                    print(f"🔄 Error delay ({error_delay:.1f}s)...")
+                    time.sleep(error_delay)
                     continue
             
             extract_duration = time.time() - extract_start_time
@@ -768,85 +937,6 @@ class GoogleMapsScraper:
         
         return results
 
-    def extract_phone_info(self):
-        """Extract informasi nomor telepon"""
-        try:
-            phone_selectors = [
-                "[data-item-id*='phone'] .fontBodyMedium",
-                "[data-value*='phone'] .fontBodyMedium",
-                ".rogA2c[data-item-id*='phone']",
-                ".Io6YTe"  # Nomor telepon mungkin juga di class Io6YTe
-            ]
-            
-            for selector in phone_selectors:
-                try:
-                    phone_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    for element in phone_elements:
-                        if element and element.text.strip():
-                            text = element.text.strip()
-                            # Cek apakah text mengandung nomor telepon
-                            if any(char.isdigit() for char in text) and (
-                                text.startswith("+") or 
-                                text.startswith("0") or 
-                                "phone" in selector.lower() or
-                                len([c for c in text if c.isdigit()]) >= 8
-                            ):
-                                print(f"📞 Telepon ditemukan: {text}")
-                                return text
-                except:
-                    continue
-                    
-        except Exception as e:
-            print(f"⚠️  Error extract phone: {e}")
-        
-        return None
-    
-    def validate_data(self, data):
-        """Validasi data sebelum disimpan dengan penolakan untuk nama misleading"""
-        try:
-            # Cek field wajib
-            required_fields = ["nama", "kecamatan", "keyword"]
-            for field in required_fields:
-                if not data.get(field) or str(data[field]).strip() == "":
-                    print(f"❌ Field {field} kosong atau tidak valid")
-                    return False
-            
-            # Validasi nama tidak berisi karakter aneh atau kata misleading
-            nama = str(data["nama"]).strip()
-            if len(nama) < 2:
-                print(f"❌ Nama terlalu pendek: '{nama}'")
-                return False
-            
-            # Daftar kata yang tidak valid untuk nama
-            invalid_names = [
-                "Hasil", "Loading", "Memuat", "...", "", " ",
-                "Search", "Maps", "Google", "Location", "Place",
-                "Tempat", "Lokasi", "Cari", "Pencarian"
-            ]
-            
-            if nama in invalid_names:
-                print(f"❌ Nama tidak valid (misleading): '{nama}'")
-                return False
-            
-            # Validasi koordinat jika ada
-            if data.get("latitude") is not None and data.get("longitude") is not None:
-                try:
-                    lat = float(data["latitude"])
-                    lng = float(data["longitude"])
-                    # Validasi koordinat masuk akal untuk Indonesia
-                    if not (-11 <= lat <= 6 and 95 <= lng <= 141):
-                        print(f"❌ Koordinat tidak valid: {lat}, {lng}")
-                        return False
-                except (ValueError, TypeError):
-                    print(f"❌ Koordinat bukan angka valid: {data['latitude']}, {data['longitude']}")
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Error validasi data: {e}")
-            return False
-    
     async def scrape_district(self, district):
         """Scrape satu kecamatan dengan semua keywords"""
         self.district_start_time = time.time()
@@ -865,16 +955,29 @@ class GoogleMapsScraper:
                     
                     # Simpan data dengan validasi
                     valid_data_count = 0
+                    duplicate_count = 0
+                    
                     for data in results:
+                        # Double check duplikasi sebelum final save
+                        if self.is_comprehensive_duplicate(
+                            data["nama"], 
+                            data["kecamatan"], 
+                            data["desa"], 
+                            data["url"]
+                        ):
+                            duplicate_count += 1
+                            print(f"⏭️  Skip final save: '{data['nama']}' (duplikasi terdeteksi)")
+                            continue
+                        
                         if self.validate_data(data):
                             self.data_manager.add_data(data)
                             valid_data_count += 1
-                            print(f"💾 Data tersimpan: '{data['nama']}'")
+                            print(f"💾 Data final tersimpan: '{data['nama']}'")
                         else:
                             print(f"❌ Data tidak valid, tidak disimpan: {data.get('nama', 'Unknown')}")
                     
                     keyword_duration = time.time() - self.keyword_start_time
-                    print(f"📊 {valid_data_count}/{len(results)} data valid tersimpan untuk {keyword}")
+                    print(f"📊 {valid_data_count} data valid tersimpan, {duplicate_count} duplikasi dihindari untuk {keyword}")
                     print(f"⏱️  Waktu keyword: {self.format_duration(keyword_duration)}")
                 
                 # Delay antar keyword dengan variasi
