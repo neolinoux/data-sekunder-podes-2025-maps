@@ -2,6 +2,7 @@
 
 # Daftar kecamatan di Kabupaten Enrekang
 DISTRICTS = [
+    "Enrekang",
     "Anggeraja",
     "Baraka",
     "Buntu Batu",
@@ -11,7 +12,6 @@ DISTRICTS = [
     "Malua",
     "Masalle",
     "Bungin",
-    "Enrekang",
     "Maiwa",
     "Baroko"
 ]
