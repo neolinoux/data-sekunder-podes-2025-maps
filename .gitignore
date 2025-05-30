@@ -1,0 +1,12 @@
+# Cache files
+cache/
+*.cache
+scraping_cache.json
+
+backup/
+
+results/
+
+venv/
+
+__pycache__/
