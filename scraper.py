@@ -1,232 +1,175 @@
 import asyncio
-import json
-import csv
 import time
-import datetime
 import random
+import urllib.parse
+import re
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementNotInteractableException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, StaleElementReferenceException
 from selenium.webdriver.common.action_chains import ActionChains
 import undetected_chromedriver as uc
-from config import DISTRICTS, KEYWORDS, SCRAPING_CONFIG, OUTPUT_FILES
+from config import DISTRICTS, KEYWORDS, SCRAPING_CONFIG
 from data_manager import DataManager
 
-class GoogleMapsScraper:
+class GoogleMapsInfrastructureScraper:
     def __init__(self):
         self.driver = None
         self.data_manager = DataManager()
-        self.start_time = None
-        self.district_start_time = None
-        self.keyword_start_time = None
+        self.security_metrics = {
+          "requests_count": 0,
+          "last_request_time": time.time(),
+          "error_count": 0,
+          "session_start": time.time()
+        }
+        self.request_count = 0  # Inisialisasi request_count
+        self.session_start = time.time()  # Waktu mulai session
         self.setup_driver()
     
     def setup_driver(self):
-        """Setup undetected Chrome driver"""
+        """Enhanced setup dengan better fingerprint masking"""
         options = uc.ChromeOptions()
-        options.add_argument("--lang=id")  # Set bahasa Indonesia
+        
+        # Enhanced anti-detection
+        options.add_argument("--lang=id")
         options.add_argument("--disable-blink-features=AutomationControlled")
         options.add_argument("--disable-extensions")
-        options.add_argument("--window-size=1920,1080")  # Window size lebih besar
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-dev-shm-usage")
+        options.add_argument("--window-size=1920,1080")
+        options.add_argument("--disable-web-security")
+        options.add_argument("--disable-features=VizDisplayCompositor")
         
-        self.driver = uc.Chrome(options=options)
-        self.driver.implicitly_wait(SCRAPING_CONFIG["implicit_wait"])
+        # Additional fingerprint masking
+        options.add_argument("--disable-plugins-discovery")
+        options.add_argument("--disable-default-apps")
+        options.add_argument("--no-first-run")
+        options.add_argument("--disable-backgrounding-occluded-windows")
+        options.add_argument("--disable-renderer-backgrounding")
+        options.add_argument("--disable-features=TranslateUI")
         
-        # Buka Google Maps Indonesia
-        self.driver.get("https://maps.google.com/?hl=id")
-        time.sleep(5)
-    
-    def format_duration(self, seconds):
-        """Format durasi dalam format yang mudah dibaca"""
-        hours = int(seconds // 3600)
-        minutes = int((seconds % 3600) // 60)
-        seconds = int(seconds % 60)
+        # Random user agent rotation
+        user_agents = [
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        ]
+        options.add_argument(f"--user-agent={random.choice(user_agents)}")
         
-        if hours > 0:
-            return f"{hours}j {minutes}m {seconds}s"
-        elif minutes > 0:
-            return f"{minutes}m {seconds}s"
-        else:
-            return f"{seconds}s"
-    
-    def human_type(self, element, text):
-        """Mengetik text seperti manusia dengan delay random"""
-        # Clear field terlebih dahulu
-        element.clear()
-        time.sleep(random.uniform(0.3, 0.7))
-        
-        # Ketik karakter satu per satu dengan delay random
-        for char in text:
-            element.send_keys(char)
-            # Delay random antara 0.05-0.15 detik per karakter
-            time.sleep(random.uniform(0.05, 0.15))
-            
-            # Sesekali pause lebih lama (simulasi berpikir)
-            if random.random() < 0.1:  # 10% chance
-                time.sleep(random.uniform(0.3, 0.8))
-        
-        # Pause sebentar sebelum enter
-        time.sleep(random.uniform(0.5, 1.2))
-    
-    def simulate_human_behavior(self):
-        """Simulasi perilaku manusia random"""
-        # Random mouse movement
-        if random.random() < 0.3:  # 30% chance
-            try:
-                body = self.driver.find_element(By.TAG_NAME, "body")
-                ActionChains(self.driver).move_to_element_with_offset(
-                    body, 
-                    random.randint(100, 800), 
-                    random.randint(100, 600)
-                ).perform()
-                time.sleep(random.uniform(0.2, 0.5))
-            except:
-                pass
-        
-        # Random scroll (simulasi melihat-lihat)
-        if random.random() < 0.2:  # 20% chance
-            try:
-                self.driver.execute_script(f"window.scrollBy(0, {random.randint(-200, 200)});")
-                time.sleep(random.uniform(0.3, 0.7))
-                # Scroll kembali ke posisi normal
-                self.driver.execute_script("window.scrollTo(0, 0);")
-            except:
-                pass
-    
-    def is_element_clickable(self, element):
-        """Cek apakah element bisa diklik dengan validasi yang lebih fleksibel"""
         try:
-            # Cek apakah element ada dan visible
-            if not element:
-                return False
-                
-            # Cek display dengan try-catch karena element mungkin stale
-            try:
-                if not element.is_displayed():
-                    return False
-            except:
-                # Element mungkin stale, tapi masih bisa diklik
-                print("⚠️  Element mungkin stale tapi masih bisa dicoba")
-                return True
+            self.driver = uc.Chrome(options=options)
+            self.driver.implicitly_wait(SCRAPING_CONFIG["implicit_wait"])
             
-            # Cek ukuran element - lebih fleksibel
-            try:
-                size = element.size
-                if size['height'] <= 0 or size['width'] <= 0:
-                    print(f"⚠️  Element size kecil: {size}")
-                    # Jangan langsung return False, masih bisa diklik
-            except:
-                print("⚠️  Tidak bisa get size, tapi masih bisa dicoba")
+            # Enhanced script injection
+            self.driver.execute_cdp_cmd('Page.addScriptToEvaluateOnNewDocument', {
+                'source': '''
+                    // Mask webdriver property
+                    Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                    
+                    // Mask automation flags
+                    Object.defineProperty(navigator, 'plugins', {get: () => [1, 2, 3, 4, 5]});
+                    Object.defineProperty(navigator, 'languages', {get: () => ['id-ID', 'en-US']});
+                    
+                    // Random screen properties
+                    Object.defineProperty(screen, 'availWidth', {get: () => 1920});
+                    Object.defineProperty(screen, 'availHeight', {get: () => 1080});
+                '''
+            })
             
-            # Cek lokasi element - lebih fleksibel
-            try:
-                location = element.location
-                # Koordinat negatif masih mungkin bisa diklik
-                if location['x'] < -100 or location['y'] < -100:
-                    print(f"⚠️  Element di luar area: {location}")
-                    return False
-            except:
-                print("⚠️  Tidak bisa get location, tapi masih bisa dicoba")
+            # Clear cookies dan cache
+            self.driver.delete_all_cookies()
+            self.driver.execute_script("window.localStorage.clear();")
+            self.driver.execute_script("window.sessionStorage.clear();")
             
-            return True
+            # Buka Google Maps Indonesia
+            self.driver.get("https://maps.google.com/?hl=id")
+            time.sleep(3)
+            print("🌍 Google Maps loaded dengan bahasa Indonesia")
             
         except Exception as e:
-            print(f"⚠️  Error check clickable: {e}")
-            # Jika ada error, anggap masih bisa diklik untuk dicoba
-            return True
-
-    def force_click_element(self, element, item_index):
-        """Force click element dengan berbagai metode dan timing yang lebih natural"""
-        clicked = False
+            print(f"❌ Error setting up driver: {e}")
+            print("🔄 Trying alternative setup...")
+            
+            # Fallback setup with minimal options
+            minimal_options = uc.ChromeOptions()
+            minimal_options.add_argument("--no-sandbox")
+            minimal_options.add_argument("--disable-dev-shm-usage")
+            
+            self.driver = uc.Chrome(options=minimal_options)
+            self.driver.implicitly_wait(SCRAPING_CONFIG["implicit_wait"])
+            self.driver.get("https://maps.google.com/?hl=id")
+            time.sleep(3)
+            print("🌍 Google Maps loaded with fallback setup")
+    
+    def simulate_human_behavior(self):
+        """Simulasi perilaku manusia"""
+        actions = [
+            self.random_mouse_movement,
+            self.random_scroll,
+            self.pause_and_think
+        ]
         
-        print(f"🎯 Mencoba force click pada item {item_index}...")
-        
-        # Delay sebelum force click
-        pre_click_delay = random.uniform(1.0, 2.0)
-        print(f"⏳ Pre-click delay ({pre_click_delay:.1f}s)...")
-        time.sleep(pre_click_delay)
-        
-        # Metode 1: Scroll ke element dulu
+        if random.random() < SCRAPING_CONFIG["human_behavior_chance"]:
+            action = random.choice(actions)
+            action()
+    
+    def random_mouse_movement(self):
+        """Gerakan mouse random"""
         try:
-            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
-            scroll_delay = random.uniform(1.5, 2.5)
-            print(f"📜 Scrolling to element ({scroll_delay:.1f}s)...")
-            time.sleep(scroll_delay)
+            body = self.driver.find_element(By.TAG_NAME, "body")
+            ActionChains(self.driver).move_to_element_with_offset(
+                body, random.randint(100, 500), random.randint(100, 400)
+            ).perform()
+            time.sleep(random.uniform(0.5, 1.5))
         except:
             pass
-        
-        # Metode 2: ActionChains dengan retry dan timing yang lebih natural
-        for attempt in range(2):
-            try:
-                # Hover dulu sebelum click
-                ActionChains(self.driver).move_to_element(element).perform()
-                hover_delay = random.uniform(0.8, 1.5)
-                time.sleep(hover_delay)
-                
-                # Lalu click dengan pause
-                ActionChains(self.driver).move_to_element(element).pause(0.5).click().perform()
-                clicked = True
-                print(f"✅ Force click berhasil dengan ActionChains (attempt {attempt + 1})")
-                break
-            except Exception as e:
-                print(f"⚠️  ActionChains attempt {attempt + 1} gagal: {e}")
-                retry_delay = random.uniform(1.0, 2.0)
-                time.sleep(retry_delay)
-        
-        # Metode 3: JavaScript click
-        if not clicked:
-            try:
-                # Small delay before JS click
-                time.sleep(random.uniform(0.5, 1.0))
-                self.driver.execute_script("arguments[0].click();", element)
-                clicked = True
-                print(f"✅ Force click berhasil dengan JavaScript")
-            except Exception as e:
-                print(f"⚠️  JavaScript click gagal: {e}")
-        
-        # Metode 4: Click dengan koordinat
-        if not clicked:
-            try:
-                location = element.location
-                size = element.size
-                x = location['x'] + size['width'] // 2
-                y = location['y'] + size['height'] // 2
-                
-                # Move to coordinate then click
-                ActionChains(self.driver).move_by_offset(x, y).pause(0.5).click().perform()
-                clicked = True
-                print(f"✅ Force click berhasil dengan koordinat ({x}, {y})")
-            except Exception as e:
-                print(f"⚠️  Coordinate click gagal: {e}")
-        
-        # Metode 5: Click pada parent element
-        if not clicked:
-            try:
-                parent = element.find_element(By.XPATH, "..")
-                time.sleep(random.uniform(0.3, 0.8))
-                self.driver.execute_script("arguments[0].click();", parent)
-                clicked = True
-                print(f"✅ Force click berhasil pada parent element")
-            except Exception as e:
-                print(f"⚠️  Parent click gagal: {e}")
-        
-        # Delay setelah click berhasil
-        if clicked:
-            post_click_delay = random.uniform(1.0, 2.0)
-            print(f"✅ Click berhasil, post-click delay ({post_click_delay:.1f}s)...")
-            time.sleep(post_click_delay)
-        
-        return clicked
-
-    async def search_location(self, keyword, district):
-        """Cari lokasi dengan keyword dan kecamatan dengan human-like typing"""
+    
+    def random_scroll(self):
+        """Scroll random"""
         try:
-            search_query = f"{keyword} di kecamatan {district} Kabupaten Enrekang Sulawesi Selatan"
+            self.driver.execute_script(f"window.scrollBy(0, {random.randint(-200, 200)})")
+            time.sleep(random.uniform(0.5, 1.0))
+        except:
+            pass
+    
+    def pause_and_think(self):
+        """Pause seperti manusia sedang berpikir"""
+        time.sleep(random.uniform(1.0, 3.0))
+    
+    def human_type(self, element, text):
+        """Typing seperti manusia"""
+        element.clear()
+        time.sleep(random.uniform(0.3, 0.8))
+        
+        for char in text:
+            element.send_keys(char)
+            time.sleep(random.uniform(0.05, 0.15))
+        
+        time.sleep(random.uniform(0.5, 1.0))
+    
+    def adaptive_delay(self):
+        """Adaptive delay berdasarkan request count dan waktu"""
+        # Semakin banyak request, semakin lama delay
+        base_delay = 2.0
+        request_factor = min(self.request_count / 100, 2.0)  # Max 2x multiplier
+        
+        # Tambah delay jika session sudah lama
+        session_duration = time.time() - self.session_start
+        if session_duration > 3600:  # > 1 jam
+            base_delay *= 1.5
+        
+        final_delay = base_delay * (1 + request_factor)
+        time.sleep(random.uniform(final_delay * 0.8, final_delay * 1.2))
+        self.request_count += 1
+
+    async def search_infrastructure(self, keyword, district):
+        """Pencarian infrastruktur di kecamatan tertentu"""
+        try:
+            search_query = f"{keyword} di kecamatan {district} Kabupaten Enrekang"
             
-            # Simulasi perilaku manusia sebelum mencari
+            # Simulasi human behavior
             self.simulate_human_behavior()
             
             # Cari search box
@@ -234,23 +177,21 @@ class GoogleMapsScraper:
                 EC.presence_of_element_located((By.ID, "searchboxinput"))
             )
             
-            # Click search box seperti manusia
-            ActionChains(self.driver).move_to_element(search_box).click().perform()
-            time.sleep(random.uniform(0.3, 0.7))
+            # Click dan ketik dengan human-like behavior
+            search_box.click()
+            time.sleep(random.uniform(0.5, 1.0))
             
             print(f"🔍 Mencari: {search_query}")
-            print("⌨️  Mengetik seperti manusia...")
-            
-            # Ketik seperti manusia
             self.human_type(search_box, search_query)
             
-            # Tekan enter dengan delay natural
+            # Enter untuk search
             search_box.send_keys(Keys.RETURN)
             
-            # Wait untuk hasil pencarian dengan delay random
-            base_delay = SCRAPING_CONFIG["delay_between_searches"]
-            random_delay = random.uniform(base_delay, base_delay + 2)
-            time.sleep(random_delay)
+            # Wait untuk hasil muncul
+            time.sleep(random.uniform(3, 5))
+            
+            # Tambahkan adaptive delay
+            self.adaptive_delay()
             
             return True
             
@@ -262,9 +203,8 @@ class GoogleMapsScraper:
             return False
     
     async def scroll_to_load_all_results(self):
-        """Scroll infinite untuk memuat semua hasil dengan deteksi akhir daftar"""
-        print("📜 Memuat semua hasil dengan infinite scroll...")
-        scroll_start_time = time.time()
+        """Scroll sampai akhir untuk memuat semua hasil"""
+        print("📜 Loading semua hasil dengan scrolling...")
         
         try:
             # Cari container hasil pencarian
@@ -272,102 +212,63 @@ class GoogleMapsScraper:
                 EC.presence_of_element_located((By.CSS_SELECTOR, "[role='feed']"))
             )
             
-            last_result_count = 0
-            no_new_results_count = 0
+            last_height = self.driver.execute_script("return arguments[0].scrollHeight", results_container)
             scroll_attempts = 0
+            no_new_results_count = 0
             
             while scroll_attempts < SCRAPING_CONFIG["max_scroll_attempts"]:
-                # Scroll dengan variasi speed seperti manusia
-                scroll_distance = random.randint(300, 800)
-                self.driver.execute_script(f"arguments[0].scrollTop += {scroll_distance}", results_container)
+                # Scroll ke bawah
+                self.driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", results_container)
                 
-                # Wait dengan variasi delay
-                base_pause = SCRAPING_CONFIG["scroll_pause_time"]
-                random_pause = random.uniform(base_pause, base_pause + 1)
-                time.sleep(random_pause)
+                # Wait untuk loading
+                time.sleep(random.uniform(2, 4))
                 
-                # Cek apakah sudah mencapai akhir daftar
-                try:
-                    # Cari teks "Anda telah mencapai akhir daftar"
-                    end_of_list_indicators = [
-                        "Anda telah mencapai akhir daftar",
-                        "You've reached the end of the list",
-                        "akhir daftar",
-                        "end of the list"
-                    ]
-                    
-                    page_text = self.driver.page_source.lower()
-                    for indicator in end_of_list_indicators:
-                        if indicator.lower() in page_text:
-                            print(f"🏁 Deteksi akhir daftar: '{indicator}'")
-                            print("✅ Scroll selesai - mencapai akhir daftar")
-                            break
-                    else:
-                        # Jika tidak ada break, lanjutkan scroll
-                        pass
-                    
-                    # Jika ditemukan indikator akhir, keluar dari loop
-                    if any(indicator.lower() in page_text for indicator in end_of_list_indicators):
-                        break
-                        
-                except Exception as e:
-                    print(f"⚠️  Error cek akhir daftar: {e}")
+                # Check apakah ada hasil baru
+                new_height = self.driver.execute_script("return arguments[0].scrollHeight", results_container)
                 
-                # Sesekali pause lebih lama (simulasi membaca)
-                if random.random() < 0.15:  # 15% chance
-                    time.sleep(random.uniform(1, 3))
-                    print("👀 Membaca hasil...")
-                
-                # Hitung jumlah hasil saat ini menggunakan class hfpxzc
-                current_results = self.driver.find_elements(By.CSS_SELECTOR, ".hfpxzc")
-                current_count = len(current_results)
-                
-                print(f"📊 Scroll {scroll_attempts + 1}: {current_count} hasil ditemukan")
-                
-                # Cek apakah ada hasil baru (fallback jika deteksi teks gagal)
-                if current_count == last_result_count:
+                if new_height == last_height:
                     no_new_results_count += 1
-                    if no_new_results_count >= SCRAPING_CONFIG["no_new_results_threshold"]:
-                        print("✅ Tidak ada hasil baru, scroll selesai (fallback)")
+                    if no_new_results_count >= 3:
+                        print("✅ Mencapai akhir hasil")
                         break
                 else:
                     no_new_results_count = 0
-                    last_result_count = current_count
+                    last_height = new_height
+                    print(f"📊 Scroll {scroll_attempts + 1}: Loading lebih banyak hasil...")
                 
                 scroll_attempts += 1
+                
+                # Human behavior simulation
+                if random.random() < 0.3:
+                    self.simulate_human_behavior()
             
-            scroll_duration = time.time() - scroll_start_time
-            print(f"🎯 Total hasil setelah scroll: {last_result_count}")
-            print(f"⏱️  Waktu scroll: {self.format_duration(scroll_duration)}")
             return True
             
         except Exception as e:
-            print(f"❌ Error saat scroll: {e}")
+            print(f"❌ Error saat scrolling: {e}")
             return False
     
     def extract_coordinates_from_url(self, url):
-        """Extract koordinat dari URL Google Maps setelah click element"""
+        """Extract koordinat dari URL Google Maps dengan enhanced parsing"""
         try:
-            print(f"🌍 URL saat ini: {url}")
+            print(f"🌍 Extracting coordinates from: {url[:100]}...")
             
-            # Format URL Google Maps: .../@lat,lng,zoom... atau /place/.../@lat,lng,zoom...
+            # Method 1: Standard Google Maps format with @
             if "@" in url:
-                # Split berdasarkan @ dan ambil bagian koordinat
                 coords_part = url.split("@")[1].split("/")[0]
                 coords = coords_part.split(",")
                 
                 if len(coords) >= 2:
-                    lat = float(coords[0])
-                    lng = float(coords[1])
-                    print(f"📍 Koordinat ditemukan: Lat {lat}, Lng {lng}")
-                    return {
-                        "lat": lat,
-                        "lng": lng
-                    }
+                    try:
+                        lat = float(coords[0])
+                        lng = float(coords[1])
+                        print(f"📍 Koordinat ditemukan (@): Lat {lat}, Lng {lng}")
+                        return {"lat": lat, "lng": lng}
+                    except ValueError:
+                        pass
             
-            # Alternatif: cek jika format berbeda
-            if "/place/" in url and "," in url:
-                # Coba extract dari bagian setelah /place/
+            # Method 2: Place URL format
+            if "/place/" in url:
                 try:
                     place_part = url.split("/place/")[1]
                     if "@" in place_part:
@@ -376,685 +277,622 @@ class GoogleMapsScraper:
                         if len(coords) >= 2:
                             lat = float(coords[0])
                             lng = float(coords[1])
-                            print(f"📍 Koordinat ditemukan (alt): Lat {lat}, Lng {lng}")
-                            return {
-                                "lat": lat,
-                                "lng": lng
-                            }
+                            print(f"📍 Koordinat ditemukan (place): Lat {lat}, Lng {lng}")
+                            return {"lat": lat, "lng": lng}
                 except:
                     pass
-                    
+            
+            # Method 3: Search dalam URL untuk pattern koordinat
+            coord_pattern = r'[-+]?\d{1,2}\.\d{4,}(?:,|\s*)[-+]?\d{1,3}\.\d{4,}'
+            matches = re.findall(coord_pattern, url)
+            
+            if matches:
+                try:
+                    coord_str = matches[0].replace(',', ' ')
+                    coords = coord_str.split()
+                    if len(coords) >= 2:
+                        lat = float(coords[0])
+                        lng = float(coords[1])
+                        # Validasi range Indonesia
+                        if -11 <= lat <= 6 and 95 <= lng <= 141:
+                            print(f"📍 Koordinat ditemukan (regex): Lat {lat}, Lng {lng}")
+                            return {"lat": lat, "lng": lng}
+                except:
+                    pass
+                
         except Exception as e:
             print(f"⚠️  Error extract koordinat: {e}")
-        
-        print("❌ Koordinat tidak ditemukan di URL")
+    
+        print("❌ Koordinat tidak ditemukan")
         return {"lat": None, "lng": None}
     
-    def extract_name_from_element(self):
-        """Extract nama infrastruktur menggunakan class DUwDvf setelah click hfpxzc tanpa h1"""
+    def extract_address_and_parse_location(self):
+        """Extract alamat dan parse kecamatan/desa"""
         try:
-            # Tunggu sampai element nama siap dengan class DUwDvf
-            name_element = WebDriverWait(self.driver, 8).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".DUwDvf"))
-            )
-            
-            if name_element and name_element.text.strip():
-                name = name_element.text.strip()
-                
-                # Validasi nama tidak kosong dan bukan placeholder
-                if len(name) > 0 and name not in ["", " ", "...", "Loading", "Memuat", "Hasil"]:
-                    print(f"📝 Nama ditemukan (DUwDvf): {name}")
-                    return name
-                    
-        except TimeoutException:
-            print("⚠️  Timeout menunggu element nama dengan class DUwDvf")
-        except Exception as e:
-            print(f"⚠️  Error extract nama dengan class DUwDvf: {e}")
-        
-        # Fallback ke class a5H0ec
-        try:
-            name_element = WebDriverWait(self.driver, 5).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, ".a5H0ec"))
-            )
-            
-            if name_element and name_element.text.strip():
-                name = name_element.text.strip()
-                
-                # Validasi nama tidak kosong dan bukan placeholder
-                if len(name) > 0 and name not in ["", " ", "...", "Loading", "Memuat", "Hasil"]:
-                    print(f"📝 Nama ditemukan (a5H0ec fallback): {name}")
-                    return name
-                    
-        except Exception as e:
-            print(f"⚠️  Error extract nama dengan class a5H0ec: {e}")
-        
-        # Fallback ke selector lain dengan prioritas (TANPA h1)
-        fallback_selectors = [
-            (".fontDisplayLarge", "display large"),
-            (".fontHeadlineSmall", "headline small"),
-            ("[data-value='title']", "data title"),
-            (".x3AX1-LfntMc-header-title-title", "header title"),
-            (".fontBodyLarge", "body large"),
-            (".fontHeadlineMedium", "headline medium")
-        ]
-        
-        for selector, desc in fallback_selectors:
-            try:
-                name_element = WebDriverWait(self.driver, 3).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                )
-                if name_element and name_element.text.strip():
-                    name = name_element.text.strip()
-                    if len(name) > 0 and name not in ["", " ", "...", "Loading", "Memuat", "Hasil"]:
-                        print(f"📝 Nama ditemukan (fallback {desc}): {name}")
-                        return name
-            except:
-                continue
-        
-        print("❌ Nama tidak ditemukan dengan semua metode")
-        return None
-    
-    def extract_address_and_village(self):
-        """Extract alamat, desa, dan kecamatan menggunakan class Io6YTe dengan format 'Kec. [Nama]'"""
-        try:
-            # Gunakan class Io6YTe untuk alamat
+            # Cari elemen alamat dengan class Io6YTe
             address_elements = self.driver.find_elements(By.CSS_SELECTOR, ".Io6YTe")
-            
-            full_address = None
-            village = "Unknown"
-            kecamatan_extracted = None
             
             for element in address_elements:
                 if element and element.text.strip():
-                    text = element.text.strip()
-                    # Skip jika text terlalu pendek atau hanya angka
-                    if len(text) > 5 and not text.isdigit():
-                        full_address = text
-                        print(f"🏠 Alamat ditemukan: {full_address}")
-                        
-                        # Parse kecamatan dan desa dari alamat
-                        parsed_info = self.parse_kecamatan_and_village_from_address(full_address)
-                        village = parsed_info["village"]
-                        kecamatan_extracted = parsed_info["kecamatan"]
-                        break
+                    address = element.text.strip()
+                    print(f"🏠 Alamat ditemukan: {address}")
+                    
+                    # Parse kecamatan dan desa
+                    location_info = self.parse_kecamatan_and_village(address)
+                    
+                    return {
+                        "address": address,
+                        "kecamatan": location_info["kecamatan"],
+                        "desa": location_info["desa"]
+                    }
             
-            return {
-                "address": full_address,
-                "village": village,
-                "kecamatan": kecamatan_extracted
-            }
+            print("❌ Alamat tidak ditemukan")
+            return {"address": None, "kecamatan": "Unknown", "desa": "Unknown"}
             
         except Exception as e:
-            print(f"⚠️  Error extract alamat dengan class Io6YTe: {e}")
-        
-        # Fallback ke selector lain
-        fallback_selectors = [
-            "[data-item-id='address'] .fontBodyMedium",
-            ".rogA2c .fontBodyMedium",
-            ".fontBodyMedium"
-        ]
-        
-        for selector in fallback_selectors:
-            try:
-                address_elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                for element in address_elements:
-                    if element and element.text.strip():
-                        text = element.text.strip()
-                        if len(text) > 5 and not text.isdigit():
-                            full_address = text
-                            parsed_info = self.parse_kecamatan_and_village_from_address(full_address)
-                            village = parsed_info["village"]
-                            kecamatan_extracted = parsed_info["kecamatan"]
-                            print(f"🏠 Alamat ditemukan (fallback): {full_address}")
-                            return {
-                                "address": full_address,
-                                "village": village,
-                                "kecamatan": kecamatan_extracted
-                            }
-            except:
-                continue
-        
-        print("❌ Alamat tidak ditemukan")
-        return {
-            "address": None,
-            "village": "Unknown",
-            "kecamatan": None
-        }
+            print(f"⚠️  Error extract alamat: {e}")
+            return {"address": None, "kecamatan": "Unknown", "desa": "Unknown"}
     
-    def parse_kecamatan_and_village_from_address(self, address):
-        """Parse nama kecamatan dan desa dari alamat dengan format 'Kec. [Nama]'"""
+    def parse_kecamatan_and_village(self, address):
+        """Parse kecamatan dan desa dari alamat"""
         try:
-            print(f"🔍 Parsing alamat: {address}")
-            
-            # Split alamat berdasarkan koma
+            # Split berdasarkan koma
             parts = [part.strip() for part in address.split(",")]
-            print(f"📝 Bagian alamat: {parts}")
             
-            village = "Unknown"
-            kecamatan = None
+            kecamatan = "Unknown"
+            desa = "Unknown"
             
             # Cari bagian yang mengandung "Kec."
             for i, part in enumerate(parts):
                 if "Kec." in part:
-                    # Extract nama kecamatan setelah "Kec."
-                    kecamatan_raw = part.replace("Kec.", "").strip()
-                    kecamatan = kecamatan_raw
-                    print(f"🏘️  Kecamatan ditemukan: {kecamatan}")
+                    # Extract nama kecamatan
+                    kecamatan = part.replace("Kec.", "").strip()
+                    print(f"🏘️  Kecamatan: {kecamatan}")
                     
-                    # Nama desa adalah bagian sebelum kecamatan (bagian sebelum koma)
+                    # Desa adalah bagian sebelum kecamatan
                     if i > 0:
-                        village_part = parts[i - 1].strip()
-                        # Bersihkan nama desa dari kata-kata tambahan
-                        village = self.clean_village_name(village_part)
-                        print(f"🏡 Desa ditemukan: {village}")
+                        desa = parts[i - 1].strip()
+                        # Bersihkan dari kata "Desa", "Kelurahan", dll
+                        desa = desa.replace("Desa", "").replace("Kelurahan", "").replace("Kel.", "").strip()
+                        print(f"🏡 Desa: {desa}")
+                    
                     break
             
-            # Jika tidak ada "Kec." tapi ada "Kelurahan" atau "Desa"
-            if not kecamatan:
-                for i, part in enumerate(parts):
-                    if "Desa" in part or "Kelurahan" in part or "Kel." in part or "Ds." in part:
-                        # Bersihkan kata-kata tambahan untuk mendapat nama desa
-                        village_raw = part.replace("Desa", "").replace("Kelurahan", "").replace("Kel.", "").replace("Ds.", "").strip()
-                        village = village_raw
-                        print(f"🏡 Desa ditemukan (dari kata kunci): {village}")
-                        break
-            
-            # Jika masih tidak ada desa, ambil bagian yang masuk akal
-            if village == "Unknown" and len(parts) > 1:
-                # Coba ambil bagian kedua atau ketiga yang bukan nomor
-                for part in parts[1:3]:  # Skip bagian pertama (biasanya alamat detail)
-                    clean_part = part.strip()
-                    # Skip jika berisi angka atau kata kunci lokasi umum
-                    if not any(char.isdigit() for char in clean_part) and len(clean_part) > 2:
-                        if not any(keyword in clean_part.lower() for keyword in ["jalan", "jl.", "rt", "rw", "no"]):
-                            village = clean_part
-                            print(f"🏡 Desa ditemukan (parsed): {village}")
-                            break
-            
-            return {
-                "village": village,
-                "kecamatan": kecamatan
-            }
+            return {"kecamatan": kecamatan, "desa": desa}
             
         except Exception as e:
-            print(f"⚠️  Error parse kecamatan dan desa: {e}")
-            return {
-                "village": "Unknown",
-                "kecamatan": None
-            }
+            print(f"⚠️  Error parsing lokasi: {e}")
+            return {"kecamatan": "Unknown", "desa": "Unknown"}
     
-    def clean_village_name(self, village_raw):
-        """Bersihkan nama desa dari kata-kata tambahan"""
-        try:
-            # Daftar kata yang perlu dihapus
-            words_to_remove = [
-                "Desa", "Kelurahan", "Kel.", "Ds.", "RT", "RW", 
-                "No.", "No", "Jl.", "Jalan", "Gang", "Gg."
-            ]
+    def wait_for_url_change(self, original_url, max_wait=15):
+        """Wait untuk URL berubah setelah click dengan retry mechanism"""
+        print(f"🔄 Menunggu URL berubah dari: {original_url[:80]}...")
+        
+        start_time = time.time()
+        check_interval = 0.5
+        last_url = original_url
+        
+        while time.time() - start_time < max_wait:
+            current_url = self.driver.current_url
             
-            cleaned = village_raw
-            for word in words_to_remove:
-                cleaned = cleaned.replace(word, "").strip()
+            # Cek apakah URL berubah
+            if current_url != original_url:
+                wait_time = time.time() - start_time
+                print(f"✅ URL berubah setelah {wait_time:.1f}s")
+                print(f"🔗 URL baru: {current_url[:80]}...")
+                return current_url
             
-            # Hapus karakter khusus di awal dan akhir
-            cleaned = cleaned.strip(".,- ")
+            # Update progress setiap 2 detik
+            if int(time.time() - start_time) % 2 == 0 and current_url != last_url:
+                elapsed = time.time() - start_time
+                print(f"⏳ Masih menunggu URL berubah... ({elapsed:.1f}s)")
+                last_url = current_url
             
-            # Jika hasil terlalu pendek, gunakan original
-            if len(cleaned) < 2:
-                cleaned = village_raw.strip()
-            
-            return cleaned
-            
-        except Exception as e:
-            print(f"⚠️  Error clean village name: {e}")
-            return village_raw
+            time.sleep(check_interval)
+        
+        print(f"⚠️  Timeout: URL tidak berubah dalam {max_wait}s")
+        return None
 
-    def validate_data(self, data):
-        """Validasi data sebelum disimpan dengan penolakan untuk nama misleading"""
+    def get_href_url_from_element(self, element):
+        """Extract URL dari href attribute sebelum click"""
         try:
-            # Cek field wajib
-            required_fields = ["nama", "kecamatan", "keyword"]
-            for field in required_fields:
-                if not data.get(field) or str(data[field]).strip() == "":
-                    print(f"❌ Field {field} kosong atau tidak valid")
-                    return False
-            
-            # Validasi nama tidak berisi karakter aneh atau kata misleading
-            nama = str(data["nama"]).strip()
-            if len(nama) < 2:
-                print(f"❌ Nama terlalu pendek: '{nama}'")
-                return False
-            
-            # Daftar kata yang tidak valid untuk nama
-            invalid_names = [
-                "Hasil", "Loading", "Memuat", "...", "", " ",
-                "Search", "Maps", "Google", "Location", "Place",
-                "Tempat", "Lokasi", "Cari", "Pencarian"
-            ]
-            
-            if nama in invalid_names:
-                print(f"❌ Nama tidak valid (misleading): '{nama}'")
-                return False
-            
-            # Validasi koordinat jika ada
-            if data.get("latitude") is not None and data.get("longitude") is not None:
-                try:
-                    lat = float(data["latitude"])
-                    lng = float(data["longitude"])
-                    # Validasi koordinat masuk akal untuk Indonesia
-                    if not (-11 <= lat <= 6 and 95 <= lng <= 141):
-                        print(f"❌ Koordinat tidak valid: {lat}, {lng}")
-                        return False
-                except (ValueError, TypeError):
-                    print(f"❌ Koordinat bukan angka valid: {data['latitude']}, {data['longitude']}")
-                    return False
-            
-            return True
-            
+            href_url = element.get_attribute("href")
+            if href_url and href_url.strip():
+                print(f"🔗 URL ditemukan dari href: {href_url[:80]}...")
+                return href_url.strip()
         except Exception as e:
-            print(f"❌ Error validasi data: {e}")
-            return False
+            print(f"⚠️  Error get href: {e}")
+        
+        return None
 
-    def is_comprehensive_duplicate(self, nama, kecamatan, desa, url):
-        """Cek duplikasi komprehensif berdasarkan nama, kecamatan, desa, dan URL"""
+    def click_element_and_get_url(self, element, element_name="element"):
+        """Click element dan pastikan mendapat URL yang benar"""
+        original_url = self.driver.current_url
+        final_url = None
+        
+        # Step 1: Coba ambil URL dari href attribute dulu
+        href_url = self.get_href_url_from_element(element)
+        
+        # Step 2: Scroll ke element
         try:
-            # Normalisasi data untuk perbandingan
-            nama_clean = str(nama).strip().lower()
-            kecamatan_clean = str(kecamatan).strip().lower()
-            desa_clean = str(desa).strip().lower()
-            url_clean = str(url).strip() if url else ""
-            
-            # Cek di data manager
-            existing_data = self.data_manager.get_all_data()
-            
-            for existing in existing_data:
-                existing_nama = str(existing.get("nama", "")).strip().lower()
-                existing_kecamatan = str(existing.get("kecamatan", "")).strip().lower()
-                existing_desa = str(existing.get("desa", "")).strip().lower()
-                existing_url = str(existing.get("url", "")).strip()
-                
-                # Cek exact match untuk nama, kecamatan, dan desa
-                if (existing_nama == nama_clean and 
-                    existing_kecamatan == kecamatan_clean and 
-                    existing_desa == desa_clean):
-                    
-                    print(f"🔍 Duplikasi ditemukan berdasarkan nama-kecamatan-desa:")
-                    print(f"   Existing: {existing.get('nama')} | {existing.get('kecamatan')} | {existing.get('desa')}")
-                    print(f"   New: {nama} | {kecamatan} | {desa}")
-                    return True
-                
-                # Cek duplikasi berdasarkan URL yang sama (jika URL ada)
-                if url_clean and existing_url and url_clean == existing_url:
-                    print(f"🔍 Duplikasi ditemukan berdasarkan URL:")
-                    print(f"   Existing: {existing.get('nama')} - {existing_url}")
-                    print(f"   New: {nama} - {url_clean}")
-                    return True
-                
-                # Cek duplikasi berdasarkan nama yang sama di lokasi yang sama
-                if (existing_nama == nama_clean and 
-                    existing_kecamatan == kecamatan_clean):
-                    
-                    # Jika desa berbeda tapi nama sama di kecamatan yang sama, beri peringatan
-                    if existing_desa != desa_clean:
-                        print(f"⚠️  Nama sama di kecamatan sama tapi desa berbeda:")
-                        print(f"   Existing: {existing.get('nama')} | {existing.get('desa')}")
-                        print(f"   New: {nama} | {desa}")
-                        # Tidak skip, karena mungkin cabang atau lokasi berbeda
-                        continue
-                    else:
-                        print(f"🔍 Duplikasi ditemukan berdasarkan nama-kecamatan:")
-                        print(f"   Existing: {existing.get('nama')} | {existing.get('kecamatan')}")
-                        print(f"   New: {nama} | {kecamatan}")
-                        return True
-            
-            return False
-            
+            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", element)
+            time.sleep(random.uniform(1, 2))
         except Exception as e:
-            print(f"⚠️  Error cek duplikasi komprehensif: {e}")
-            return False
+            print(f"⚠️  Error scroll to element: {e}")
+        
+        # Step 3: Click element dengan multiple attempts
+        clicked = False
+        click_attempts = 0
+        max_attempts = 3
+        
+        while not clicked and click_attempts < max_attempts:
+            click_attempts += 1
+            print(f"🖱️  Click attempt {click_attempts}/{max_attempts} pada {element_name}")
+            
+            try:
+                # Method 1: Standard click
+                if click_attempts == 1:
+                    ActionChains(self.driver).move_to_element(element).pause(0.5).click().perform()
+                
+                # Method 2: JavaScript click
+                elif click_attempts == 2:
+                    self.driver.execute_script("arguments[0].click();", element)
+                
+                # Method 3: Force click with offset
+                else:
+                    location = element.location_once_scrolled_into_view
+                    size = element.size
+                    x = location['x'] + size['width'] // 2
+                    y = location['y'] + size['height'] // 2
+                    ActionChains(self.driver).move_by_offset(x, y).click().perform()
+                
+                clicked = True
+                print(f"✅ Click berhasil pada attempt {click_attempts}")
+                
+            except Exception as e:
+                print(f"⚠️  Click attempt {click_attempts} gagal: {e}")
+                if click_attempts < max_attempts:
+                    time.sleep(random.uniform(1, 2))
+        
+        if not clicked:
+            print(f"❌ Semua click attempts gagal untuk {element_name}")
+            return href_url  # Return href URL sebagai fallback
+        
+        # Step 4: Wait untuk URL berubah
+        new_url = self.wait_for_url_change(original_url)
+        
+        # Step 5: Prioritas URL yang akan digunakan
+        if new_url and new_url != original_url:
+            final_url = new_url
+            print(f"✅ Menggunakan URL dari click: {final_url[:80]}...")
+        elif href_url:
+            final_url = href_url
+            print(f"🔗 Menggunakan URL dari href (fallback): {final_url[:80]}...")
+            
+            # Jika menggunakan href, coba navigate langsung
+            try:
+                print("🔄 Navigating ke href URL...")
+                self.driver.get(href_url)
+                time.sleep(random.uniform(3, 5))
+                final_url = self.driver.current_url
+                print(f"✅ Berhasil navigate ke: {final_url[:80]}...")
+            except Exception as e:
+                print(f"⚠️  Error navigate ke href: {e}")
+        else:
+            print("❌ Tidak ada URL yang berhasil didapat")
+            final_url = original_url
+        
+        return final_url
 
-    async def extract_data_from_results(self, keyword, district):
-        """Extract data dengan improved click handling dan timing yang lebih natural"""
-        extract_start_time = time.time()
+    def validate_url_has_coordinates(self, url):
+        """Validasi apakah URL mengandung koordinat"""
+        if not url:
+            return False
+        
+        # Check untuk pattern koordinat dalam URL
+        patterns = [
+            r"@[-+]?\d{1,2}\.\d{4,},[-+]?\d{1,3}\.\d{4,}",  # @lat,lng format
+            r"/place/.*@[-+]?\d{1,2}\.\d{4,},[-+]?\d{1,3}\.\d{4,}",  # place format
+        ]
+        
+        for pattern in patterns:
+            if re.search(pattern, url):
+                return True
+        
+        return False
+
+    async def extract_infrastructure_data(self, keyword, district):
+        """Extract data infrastruktur dengan improved URL handling"""
         results = []
-        processed_names = set()
         
         try:
-            # Wait untuk hasil pencarian muncul
+            # Wait untuk hasil muncul
             WebDriverWait(self.driver, 15).until(
-                EC.presence_of_element_located((By.CSS_SELECTOR, "[role='feed']"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".m6QErb"))
             )
             
-            # Scroll untuk memuat semua hasil
+            # Scroll untuk load semua hasil
             await self.scroll_to_load_all_results()
             
-            # Ambil semua item hasil pencarian menggunakan class hfpxzc
-            result_items = self.driver.find_elements(By.CSS_SELECTOR, ".hfpxzc")
+            # Ambil semua link infrastruktur
+            infrastructure_links = self.driver.find_elements(By.CSS_SELECTOR, ".hfpxzc")
             
-            print(f"🔍 Memproses {len(result_items)} hasil pencarian...")
+            print(f"🏗️  Ditemukan {len(infrastructure_links)} infrastruktur")
             
-            for i, item in enumerate(result_items):
+            for i, link in enumerate(infrastructure_links):
                 try:
-                    print(f"\n🎯 Memproses item {i+1}/{len(result_items)}")
+                    print(f"\n🎯 Memproses infrastruktur {i+1}/{len(infrastructure_links)}")
                     
-                    # Delay sebelum memproses item (simulasi membaca daftar)
-                    reading_delay = random.uniform(1.5, 3.0)
-                    print(f"👀 Membaca item {i+1} ({reading_delay:.1f}s)...")
-                    time.sleep(reading_delay)
-                    
-                    # Check basic element validity
+                    # Check if element is still valid
                     try:
-                        # Test if element is stale
-                        item.tag_name  # This will throw if element is stale
-                        print(f"✓ Element {i+1} valid")
-                    except:
-                        print(f"❌ Element {i+1} stale, skip")
+                        link.tag_name  # Test if element is still attached to DOM
+                    except StaleElementReferenceException:
+                        print("⚠️  Element stale, re-finding elements...")
+                        infrastructure_links = self.driver.find_elements(By.CSS_SELECTOR, ".hfpxzc")
+                        if i >= len(infrastructure_links):
+                            print("❌ Index out of range after re-find, breaking")
+                            break
+                        link = infrastructure_links[i]
+                    
+                    # Extract nama dari aria-label SEBELUM click
+                    nama = link.get_attribute("aria-label")
+                    if not nama:
+                        print("⚠️  Nama tidak ditemukan, skip")
                         continue
                     
-                    # Improved clickability check
-                    clickable = self.is_element_clickable(item)
-                    print(f"🔍 Element {i+1} clickable check: {clickable}")
+                    nama = nama.strip()
+                    print(f"📍 Nama: {nama}")
                     
-                    # Jika tidak clickable dengan check biasa, coba force click
-                    if not clickable:
-                        print(f"⚠️  Element {i+1} gagal check clickable, mencoba force click...")
-                        clicked = self.force_click_element(item, i+1)
-                    else:
-                        # Element dianggap clickable, coba click normal
-                        print(f"✅ Element {i+1} dianggap clickable, mencoba click normal...")
-                        
-                        # Scroll item ke view dengan smooth scrolling
-                        try:
-                            self.driver.execute_script("arguments[0].scrollIntoView({behavior: 'smooth', block: 'center'});", item)
-                            scroll_wait = random.uniform(1.0, 2.0)
-                            print(f"📜 Scroll ke item {i+1} ({scroll_wait:.1f}s)...")
-                            time.sleep(scroll_wait)
-                        except:
-                            pass
-                        
-                        # Simulasi hover sebelum click (seperti manusia)
-                        try:
-                            ActionChains(self.driver).move_to_element(item).perform()
-                            hover_delay = random.uniform(0.8, 1.5)
-                            print(f"🖱️  Hover pada item {i+1} ({hover_delay:.1f}s)...")
-                            time.sleep(hover_delay)
-                        except:
-                            pass
-                        
-                        clicked = False
-                        
-                        # Cara 1: ActionChains dengan hover dulu
-                        try:
-                            ActionChains(self.driver).move_to_element(item).pause(0.5).click().perform()
-                            clicked = True
-                            print(f"✅ Click berhasil dengan ActionChains pada item {i+1}")
-                        except Exception as e:
-                            print(f"⚠️  ActionChains gagal pada item {i+1}: {e}")
-                        
-                        # Cara 2: JavaScript click jika ActionChains gagal
-                        if not clicked:
-                            try:
-                                self.driver.execute_script("arguments[0].click();", item)
-                                clicked = True
-                                print(f"✅ Click berhasil dengan JavaScript pada item {i+1}")
-                            except Exception as e:
-                                print(f"⚠️  JavaScript click gagal pada item {i+1}: {e}")
-                        
-                        # Cara 3: Force click jika masih gagal
-                        if not clicked:
-                            print(f"⚠️  Normal click gagal, mencoba force click...")
-                            clicked = self.force_click_element(item, i+1)
                     
-                    if not clicked:
-                        print(f"❌ Skip item {i+1}: Semua metode click gagal")
-                        continue
+                    # Delay sebelum processing
+                    time.sleep(random.uniform(1, 3))
                     
-                    # Wait lebih lama setelah click untuk memuat detail dengan variasi
-                    wait_time = random.uniform(5.0, 8.0)  # Increased wait time
-                    print(f"⏳ Menunggu detail dimuat ({wait_time:.1f}s)...")
-                    time.sleep(wait_time)
-                    
-                    # Simulasi scroll untuk memicu loading konten
+                    # Click element dan dapatkan URL yang benar
                     try:
-                        self.driver.execute_script("window.scrollBy(0, 100);")
-                        time.sleep(0.5)
-                        self.driver.execute_script("window.scrollBy(0, -100);")
-                        time.sleep(1.0)
-                    except:
-                        pass
+                        infrastructure_url = self.click_element_and_get_url(link, f"infrastruktur {i+1}")
+                    except Exception as e:
+                        print(f"⚠️  Error clicking element: {e}")
+                        infrastructure_url = None
                     
-                    # Extract nama dengan retry mechanism
-                    name = None
-                    retry_count = 0
-                    max_retries = 5
-                    
-                    while retry_count < max_retries and not name:
-                        name = self.extract_name_from_element()
-                        
-                        if not name or name in ["Hasil", "Loading", "Memuat", "..."]:
-                            retry_count += 1
-                            print(f"⚠️  Retry extract nama {retry_count}/{max_retries}")
-                        
-                            # Wait lebih lama antar retry
-                            retry_wait = random.uniform(3.0, 5.0)
-                            print(f"⏳ Waiting for retry ({retry_wait:.1f}s)...")
-                            time.sleep(retry_wait)
-                    
-                    # Jika masih tidak dapat nama yang valid, gunakan fallback
-                    if not name or name.strip() == "" or name in ["Hasil", "Loading", "Memuat", "..."]:
-                        name = f"Lokasi_{keyword}_{i+1}"
-                        print(f"⚠️  Menggunakan nama fallback: {name}")
-                    
-                    # Bersihkan nama
-                    name = name.strip()
-                    name = ' '.join(name.split())
-                    
-                    print(f"📝 Nama final: '{name}'")
-                    
-                    # Skip jika nama sudah diproses
-                    if name in processed_names:
-                        print(f"⏭️  Skip: {name} (sudah diproses)")
+                    if not infrastructure_url:
+                        print(f"❌ Tidak bisa mendapat URL untuk {nama}")
                         continue
                     
-                    # Skip jika data sudah ada di database
-                    if self.data_manager.is_duplicate(name, district):
-                        print(f"⏭️  Skip: {name} (sudah ada di database)")
-                        processed_names.add(name)
-                        continue
+                    # Wait tambahan untuk detail load
+                    time.sleep(random.uniform(2, 4))
                     
-                    # Extract koordinat dari URL
-                    current_url = self.driver.current_url
-                    coordinates = self.extract_coordinates_from_url(current_url)
+                    # Extract koordinat dari URL yang benar
+                    coordinates = self.extract_coordinates_from_url(infrastructure_url)
                     
-                    # Extract alamat, desa, dan kecamatan menggunakan parsing yang diperbaiki
-                    address_info = self.extract_address_and_village()
+                    # Extract alamat dan lokasi
+                    location_info = self.extract_address_and_parse_location()
                     
-                    # Extract nomor telepon
-                    phone = self.extract_phone_info()
-                    
-                    # Gunakan kecamatan dari parsing jika tersedia, jika tidak gunakan parameter district
-                    final_kecamatan = address_info.get("kecamatan") or district
-                    
-                    # Buat data dengan parsing yang diperbaiki
-                    data = {
-                        "nama": str(name).strip(),
-                        "kecamatan": str(final_kecamatan).strip(),
-                        "desa": str(address_info["village"]).strip(),
+                    # Buat data infrastruktur
+                    infrastructure_data = {
+                        "nama": nama,
+                        "kecamatan": location_info["kecamatan"] or district,
+                        "desa": location_info["desa"],
                         "latitude": coordinates["lat"],
                         "longitude": coordinates["lng"],
-                        "keyword": str(keyword).strip(),
-                        "url": str(current_url).strip(),
-                        "address": str(address_info["address"]).strip() if address_info["address"] else None,
-                        "phone": str(phone).strip() if phone else None
+                        "keyword": keyword,
+                        "url": infrastructure_url,
+                        "address": location_info["address"]
                     }
                     
-                    # Validasi data sebelum menambahkan
-                    if self.validate_data(data):
-                        results.append(data)
-                        processed_names.add(name)
-                        
-                        print(f"✅ Data valid tersimpan: {name} ({i+1}/{len(result_items)})")
-                        print(f"   📝 Nama: '{data['nama']}'")
-                        print(f"   🏘️  Kecamatan: '{data['kecamatan']}'")
-                        print(f"   🏡 Desa: '{data['desa']}'")
-                        print(f"   📍 Koordinat: {coordinates['lat']}, {coordinates['lng']}")
-                        
-                        # Save setiap 3 data
-                        if len(results) % 3 == 0:
-                            self.data_manager.add_multiple_data(results[-3:])
-                            self.data_manager.save_to_files()
-                            print(f"💾 Auto-save: {len(results)} data tersimpan")
+                    # Validasi data
+                    if self.validate_data(infrastructure_data):
+                        # add_data method sekarang sudah include comprehensive duplicate check
+                        if self.data_manager.add_data(infrastructure_data):
+                            results.append(infrastructure_data)
+                            print(f"✅ Data tersimpan: {nama}")
+                            print(f"   📍 Koordinat: {coordinates['lat']}, {coordinates['lng']}")
+                            print(f"   🏘️  Kecamatan: {infrastructure_data['kecamatan']}")
+                            print(f"   🏡 Desa: {infrastructure_data['desa']}")
+                            print(f"   🔗 URL: {infrastructure_url[:50]}...")
+                        # Jika add_data return False, berarti duplikat dan sudah di-handle
                     else:
-                        print(f"❌ Data tidak valid: {name}")
+                        print(f"❌ Data tidak valid: {nama}")
                     
-                    # Simulasi perilaku manusia lebih sering dan lebih lama
-                    if random.random() < 0.25:  # 25% chance (increased from 10%)
-                        human_delay = random.uniform(2.0, 5.0)
-                        print(f"🧑 Simulasi perilaku manusia ({human_delay:.1f}s)...")
-                        time.sleep(human_delay)
-                        self.simulate_human_behavior()
+                    # Human behavior simulation
+                    self.simulate_human_behavior()
                     
-                    # Delay antar item untuk menghindari terlalu cepat
-                    inter_item_delay = random.uniform(2.0, 4.0)
-                    print(f"⏸️  Istirahat antar item ({inter_item_delay:.1f}s)...")
-                    time.sleep(inter_item_delay)
+                    # Delay antar item
+                    time.sleep(random.uniform(
+                        SCRAPING_CONFIG["delay_between_items"],
+                        SCRAPING_CONFIG["delay_between_items"] + 2
+                    ))
                     
-                except Exception as e:
-                    print(f"⚠️  Error extract item {i+1}: {e}")
-                    # Delay juga saat error untuk menghindari spam
-                    error_delay = random.uniform(3.0, 5.0)
-                    print(f"🔄 Error delay ({error_delay:.1f}s)...")
-                    time.sleep(error_delay)
+                except StaleElementReferenceException:
+                    print("⚠️  Element stale during processing, continuing...")
                     continue
-            
-            extract_duration = time.time() - extract_start_time
-            print(f"⏱️  Waktu extract: {self.format_duration(extract_duration)}")
-            
-        except TimeoutException:
-            print("⏰ Timeout saat menunggu hasil pencarian")
+                except Exception as e:
+                    print(f"⚠️  Error item {i+1}: {e}")
+                    continue
+        
         except Exception as e:
-            print(f"❌ Error saat extract data: {e}")
+            print(f"❌ Error extract data: {e}")
         
         return results
-
+    
+    def validate_data(self, data):
+        """Validasi data sebelum disimpan"""
+        required_fields = ["nama", "kecamatan", "keyword"]
+        
+        for field in required_fields:
+            if not data.get(field) or data[field].strip() == "":
+                print(f"❌ Field {field} kosong")
+                return False
+        
+        # Validasi nama tidak terlalu pendek
+        if len(data["nama"].strip()) < 3:
+            print(f"❌ Nama terlalu pendek: {data['nama']}")
+            return False
+        
+        # Validasi koordinat jika ada
+        if data.get("latitude") and data.get("longitude"):
+            try:
+                lat = float(data["latitude"])
+                lng = float(data["longitude"])
+                # Validasi range Indonesia
+                if not (-11 <= lat <= 6 and 95 <= lng <= 141):
+                    print(f"❌ Koordinat di luar Indonesia: {lat}, {lng}")
+                    return False
+            except:
+                print(f"❌ Koordinat tidak valid: {data['latitude']}, {data['longitude']}")
+                return False
+        
+        return True
+    
     async def scrape_district(self, district):
-        """Scrape satu kecamatan dengan semua keywords"""
-        self.district_start_time = time.time()
-        print(f"\n📍 Scraping Kecamatan: {district}")
-        print(f"⏰ Dimulai: {datetime.datetime.now().strftime('%H:%M:%S')}")
+        """Scrape semua infrastruktur di satu kecamatan"""
+        print(f"\n🌍 Memulai scraping kecamatan: {district}")
         
         for keyword_index, keyword in enumerate(KEYWORDS):
             try:
-                self.keyword_start_time = time.time()
                 print(f"\n🔍 Keyword {keyword_index + 1}/{len(KEYWORDS)}: {keyword}")
                 
-                # Cari dengan keyword dan district
-                if await self.search_location(keyword, district):
-                    # Extract data dari hasil
-                    results = await self.extract_data_from_results(keyword, district)
+                # Lakukan pencarian
+                if await self.search_infrastructure(keyword, district):
+                    # Extract data infrastruktur
+                    results = await self.extract_infrastructure_data(keyword, district)
                     
-                    # Simpan data dengan validasi
-                    valid_data_count = 0
-                    duplicate_count = 0
-                    
-                    for data in results:
-                        # Double check duplikasi sebelum final save
-                        if self.is_comprehensive_duplicate(
-                            data["nama"], 
-                            data["kecamatan"], 
-                            data["desa"], 
-                            data["url"]
-                        ):
-                            duplicate_count += 1
-                            print(f"⏭️  Skip final save: '{data['nama']}' (duplikasi terdeteksi)")
-                            continue
-                        
-                        if self.validate_data(data):
-                            self.data_manager.add_data(data)
-                            valid_data_count += 1
-                            print(f"💾 Data final tersimpan: '{data['nama']}'")
-                        else:
-                            print(f"❌ Data tidak valid, tidak disimpan: {data.get('nama', 'Unknown')}")
-                    
-                    keyword_duration = time.time() - self.keyword_start_time
-                    print(f"📊 {valid_data_count} data valid tersimpan, {duplicate_count} duplikasi dihindari untuk {keyword}")
-                    print(f"⏱️  Waktu keyword: {self.format_duration(keyword_duration)}")
+                    # Simpan ke data manager
+                    added_count = self.data_manager.add_multiple_data(results)
+                    print(f"✅ Berhasil menambah {added_count} data baru")
+                else:
+                    print(f"❌ Pencarian gagal untuk {keyword}")
                 
-                # Delay antar keyword dengan variasi
-                base_delay = SCRAPING_CONFIG["delay_between_searches"]
-                random_delay = random.uniform(base_delay, base_delay + 2)
-                print(f"⏸️  Istirahat {random_delay:.1f} detik...")
-                time.sleep(random_delay)
+                # Delay antar keyword
+                if keyword_index < len(KEYWORDS) - 1:
+                    delay = random.uniform(
+                        SCRAPING_CONFIG["delay_between_keywords"],
+                        SCRAPING_CONFIG["delay_between_keywords"] + 3
+                    )
+                    print(f"⏸️  Istirahat antar keyword ({delay:.1f}s)...")
+                    time.sleep(delay)
                 
             except Exception as e:
-                print(f"❌ Error scraping {keyword} di {district}: {e}")
+                print(f"❌ Error keyword {keyword}: {e}")
                 continue
         
-        district_duration = time.time() - self.district_start_time
-        print(f"✅ Kecamatan {district} selesai dalam {self.format_duration(district_duration)}")
+        print(f"🎯 Selesai scraping kecamatan: {district}")
     
     async def scrape_all_districts(self):
-        """Scrape semua kecamatan"""
-        self.start_time = time.time()
-        start_datetime = datetime.datetime.now()
+        """Scrape semua kecamatan di Kabupaten Enrekang"""
+        print("🚀 MEMULAI SCRAPING INFRASTRUKTUR KABUPATEN ENREKANG")
+        print(f"🎯 Target: {len(DISTRICTS)} kecamatan × {len(KEYWORDS)} keywords")
+        print("=" * 60)
         
-        print(f"🚀 MULAI SCRAPING")
-        print(f"⏰ Waktu mulai: {start_datetime.strftime('%d-%m-%Y %H:%M:%S')}")
-        print(f"📊 Target: {len(DISTRICTS)} kecamatan, {len(KEYWORDS)} keyword")
-        print("=" * 50)
+        # Load data yang sudah ada jika file exists
+        self.data_manager.load_existing_data()
+        
+        start_time = time.time()
         
         for district_index, district in enumerate(DISTRICTS):
             try:
-                current_time = datetime.datetime.now()
-                elapsed_time = time.time() - self.start_time
+                print(f"\n📍 Kecamatan {district_index + 1}/{len(DISTRICTS)}: {district}")
                 
-                print(f"\n🏘️  Kecamatan {district_index + 1}/{len(DISTRICTS)}: {district}")
-                print(f"⏰ Waktu saat ini: {current_time.strftime('%H:%M:%S')}")
-                print(f"⌛ Waktu berjalan: {self.format_duration(elapsed_time)}")
-                
-                # Estimasi waktu tersisa
-                if district_index > 0:
-                    avg_time_per_district = elapsed_time / district_index
-                    remaining_districts = len(DISTRICTS) - district_index
-                    estimated_remaining = avg_time_per_district * remaining_districts
-                    print(f"🔮 Estimasi sisa waktu: {self.format_duration(estimated_remaining)}")
+                # Session break setiap 3 kecamatan
+                if district_index > 0 and district_index % 3 == 0:
+                    self.simulate_session_break()
                 
                 await self.scrape_district(district)
                 
-                # Save data setiap selesai satu kecamatan
+                # Simpan progress setelah setiap kecamatan
                 self.data_manager.save_to_files()
                 stats = self.data_manager.get_stats()
-                print(f"💾 Data disimpan untuk kecamatan {district}")
-                print(f"📊 Total data saat ini: {stats['total']}")
+                print(f"💾 Progress tersimpan - Total: {stats['total']} infrastruktur")
+                
+                # Delay antar kecamatan
+                if district_index < len(DISTRICTS) - 1:
+                    delay = random.uniform(
+                        SCRAPING_CONFIG["delay_between_districts"],
+                        SCRAPING_CONFIG["delay_between_districts"] + 10
+                    )
+                    print(f"🏖️  Istirahat antar kecamatan ({delay:.1f}s)...")
+                    time.sleep(delay)
                 
             except Exception as e:
-                print(f"❌ Error scraping district {district}: {e}")
+                print(f"❌ Error kecamatan {district}: {e}")
                 continue
         
-        # Final save dan statistik
-        self.data_manager.save_to_files()
+        # Summary akhir
+        total_time = time.time() - start_time
         final_stats = self.data_manager.get_stats()
         
-        # Hitung total waktu
-        total_duration = time.time() - self.start_time
-        end_datetime = datetime.datetime.now()
-        
-        print("\n" + "=" * 50)
-        print(f"🎉 SCRAPING SELESAI!")
-        print(f"⏰ Waktu mulai: {start_datetime.strftime('%d-%m-%Y %H:%M:%S')}")
-        print(f"⏰ Waktu selesai: {end_datetime.strftime('%d-%m-%Y %H:%M:%S')}")
-        print(f"⌛ Total waktu: {self.format_duration(total_duration)}")
-        print(f"📊 Total data terkumpul: {final_stats['total']}")
-        print(f"⚡ Rata-rata: {final_stats['total'] / total_duration * 60:.1f} data/menit")
-        
-        print(f"\n📍 Data per kecamatan:")
+        print("\n" + "=" * 60)
+        print("🎉 SCRAPING SELESAI!")
+        print(f"⏰ Total waktu: {total_time/3600:.1f} jam")
+        print(f"📊 Total infrastruktur: {final_stats['total']}")
+        print("\n📈 Distribusi per kecamatan:")
         for district, count in final_stats['by_district'].items():
-            print(f"   • {district}: {count} data")
-        print(f"\n🔍 Data per keyword:")
+            print(f"   {district}: {count} infrastruktur")
+        
+        print("\n🏗️  Distribusi per jenis infrastruktur:")
         for keyword, count in final_stats['by_keyword'].items():
-            print(f"   • {keyword}: {count} data")
+            print(f"   {keyword}: {count} infrastruktur")
+        
+        # Simpan final
+        files = self.data_manager.save_to_files()
+        print(f"\n💾 Data final disimpan:")
+        print(f"   📄 JSON: {files['json']}")
+        print(f"   📊 CSV: {files['csv']}")
     
-    async def close(self):
-        """Tutup driver"""
+    def close(self):
+        """Tutup browser"""
         if self.driver:
+            print("🔄 Menutup browser...")
             self.driver.quit()
+            print("✅ Browser ditutup")
+    
+    def __del__(self):
+        """Destructor"""
+        self.close()
+
+    def simulate_session_break(self):
+        """Simulasi break session untuk avoid detection"""
+        print("🛌 Session break - simulasi user istirahat...")
+        
+        # Random break duration (5-15 menit)
+        break_duration = random.uniform(300, 900)
+        
+        # Clear browser data
+        try:
+            self.driver.delete_all_cookies()
+            self.driver.execute_script("window.localStorage.clear();")
+            self.driver.execute_script("window.sessionStorage.clear();")
+        except:
+            pass
+        
+        # Navigate to different page
+        try:
+            self.driver.get("https://www.google.com")
+            time.sleep(random.uniform(30, 60))
+            self.driver.get("https://maps.google.com/?hl=id")
+            time.sleep(random.uniform(10, 20))
+        except:
+            pass
+        
+        print(f"💤 Session break selesai ({break_duration/60:.1f} menit)")
+
+    def recovery_mechanism(self, error_type="general"):
+        """Recovery mechanism untuk berbagai jenis error"""
+        print(f"🔄 Aktivating recovery untuk {error_type}...")
+        
+        try:
+            if error_type == "captcha":
+                print("🤖 Possible CAPTCHA detected - taking longer break...")
+                time.sleep(random.uniform(300, 600))  # 5-10 menit
+                
+            elif error_type == "rate_limit":
+                print("⏰ Rate limit detected - cooling down...")
+                time.sleep(random.uniform(600, 1200))  # 10-20 menit
+                
+            elif error_type == "blocked":
+                print("🚫 Possible blocking - restart session...")
+                self.restart_browser_session()
+            
+            # Clear dan refresh
+            self.driver.delete_all_cookies()
+            self.driver.refresh()
+            time.sleep(random.uniform(10, 20))
+            
+        except Exception as e:
+            print(f"⚠️ Recovery error: {e}")
+
+    def restart_browser_session(self):
+        """Restart browser session completely"""
+        try:
+            if self.driver:
+                self.driver.quit()
+            time.sleep(random.uniform(30, 60))
+            self.setup_driver()
+        except Exception as e:
+            print(f"⚠️ Restart error: {e}")
+
+    def wait_for_search_results(self):
+        """Wait untuk hasil pencarian dengan multiple selectors"""
+        selectors = [
+            ".m6QErb",  # Primary
+            "[role='feed']",  # Fallback 1
+            ".Nv2PK",  # Fallback 2 
+            "[data-value='Directions']"  # Fallback 3
+        ]
+        
+        for selector in selectors:
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                print(f"✅ Results found with selector: {selector}")
+                return True
+            except TimeoutException:
+                print(f"⚠️  Selector {selector} failed, trying next...")
+                continue
+        
+        print("❌ All selectors failed")
+        return False
+
+    def cleanup_browser_memory(self):
+        """Cleanup browser memory periodically"""
+        try:
+            # Clear browser cache
+            self.driver.execute_script("window.localStorage.clear();")
+            self.driver.execute_script("window.sessionStorage.clear();")
+            
+            # Clear cookies
+            self.driver.delete_all_cookies()
+            
+            # Force garbage collection
+            self.driver.execute_script("""
+                if (window.gc) {
+                    window.gc();
+                }
+            """)
+            
+            print("🧹 Browser memory cleaned")
+        except Exception as e:
+            print(f"⚠️  Memory cleanup error: {e}")
+
+    def robust_element_interaction(self, selector, action="click", max_retries=3):
+        """Robust element interaction dengan retry logic"""
+        for attempt in range(max_retries):
+            try:
+                elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                if not elements:
+                    if attempt < max_retries - 1:
+                        print(f"🔄 Attempt {attempt + 1}: Element not found, retrying...")
+                        time.sleep(random.uniform(2, 4))
+                        continue
+                    else:
+                        return None
+                
+                element = elements[0]
+                
+                # Check if element is interactable
+                if not element.is_displayed() or not element.is_enabled():
+                    self.driver.execute_script("arguments[0].scrollIntoView(true);", element)
+                    time.sleep(1)
+                
+                if action == "click":
+                    element.click()
+                elif action == "text":
+                    return element.text
+                elif action == "attribute":
+                    return element.get_attribute("aria-label")
+                
+                return element
+                
+            except StaleElementReferenceException:
+                print(f"🔄 Stale element on attempt {attempt + 1}, retrying...")
+                time.sleep(random.uniform(1, 3))
+                continue
+            except Exception as e:
+                print(f"⚠️  Error on attempt {attempt + 1}: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(random.uniform(2, 4))
+                    continue
+                else:
+                    return None
+        
+        return None

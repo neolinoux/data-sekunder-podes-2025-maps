@@ -1,39 +1,70 @@
-# Konfigurasi untuk scraping Google Maps
-
 # Daftar kecamatan di Kabupaten Enrekang
 DISTRICTS = [
-    "Enrekang",
     "Anggeraja",
-    "Baraka",
+    "Baraka", 
     "Buntu Batu",
     "Cendana",
     "Curio",
-    "Alla",
+    "Enrekang",
     "Malua",
     "Masalle",
-    "Bungin",
     "Maiwa",
+    "Alla",
+    "Bungin",
     "Baroko"
 ]
 
-# Keywords infrastruktur yang akan dicari (bisa dikustomisasi)
+# Keywords infrastruktur yang bisa dikustomisasi
 KEYWORDS = [
-    "rumah sakit",
+  "rumah sakit",
+  "puskesmas",
+  "taman kanak-kanak",
+  "raudhatul athfal",
+  "sekolah dasar",
+  "madrasah ibtidaiyah",
+  "sekolah menengah pertama",
+  "madrasah tsanawiyah",
+  "sekolah menengah atas",
+  "madrasah aliyah",
+  "sekolah menengah kejuruan",
+  "universitas",
+  "akademi",
+  "politeknik",
+  "klinik",
+  "puskesmas",
+  "praktik dokter",
+  "praktik bidan",
+  "apotek",
+  "bank",
+  "toko",
+  "pasar",
+  "minimarket",
+  "supermarket",
+  "hotel",
 ]
 
-# Pengaturan scraping - dimodifikasi untuk unlimited data
+# Konfigurasi scraping
 SCRAPING_CONFIG = {
-    "max_results_per_search": None,  # None = unlimited, ambil semua data
-    "delay_between_searches": 3,     # Delay lebih lama untuk stabilitas
-    "page_load_timeout": 15,         # Timeout lebih lama
-    "implicit_wait": 8,              # Wait lebih lama
-    "scroll_pause_time": 2,          # Delay saat scroll
-    "max_scroll_attempts": 50,       # Maximum scroll attempts untuk infinite scroll
-    "no_new_results_threshold": 3    # Berhenti scroll jika 3x berturut-turut tidak ada data baru
+    "implicit_wait": 10,
+    "page_load_timeout": 30,
+    "max_scroll_attempts": 20,
+    "delay_between_items": 2,
+    "delay_between_keywords": 5,
+    "delay_between_districts": 30,
+    "human_behavior_chance": 0.3
 }
 
 # File output
 OUTPUT_FILES = {
-    "json": "hasil_scraping.json",
-    "csv": "hasil_scraping.csv"
+    "json": "infrastruktur_enrekang.json",
+    "csv": "infrastruktur_enrekang.csv"
+}
+
+# Tambahkan di config.py
+SECURITY_CONFIG = {
+    "max_requests_per_hour": 50,
+    "session_break_interval": 3,  # Every 3 districts
+    "recovery_delay_multiplier": 2.0,
+    "max_retries_per_element": 3,
+    "randomize_order": True,  # Randomize district order
 }
