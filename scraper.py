@@ -26,6 +26,11 @@ class GoogleMapsInfrastructureScraper:
         }
         self.request_count = 0  # Inisialisasi request_count
         self.session_start = time.time()  # Waktu mulai session
+        
+        # Variables untuk pilihan user
+        self.selected_keywords = []
+        self.selected_districts = []
+        
         self.setup_driver()
     
     def setup_driver(self):
@@ -896,3 +901,83 @@ class GoogleMapsInfrastructureScraper:
                     return None
         
         return None
+
+    async def scrape_selected_infrastructure(self):
+        """Scrape infrastruktur berdasarkan pilihan user"""
+        print("🚀 MEMULAI SCRAPING INFRASTRUKTUR TERPILIH")
+        print(f"🎯 Target: {len(self.selected_districts)} kecamatan × {len(self.selected_keywords)} infrastruktur")
+        print("=" * 60)
+        
+        # Load data yang sudah ada jika file exists
+        self.data_manager.load_existing_data()
+        
+        start_time = time.time()
+        
+        for district_index, district in enumerate(self.selected_districts):
+            try:
+                print(f"\n📍 Kecamatan {district_index + 1}/{len(self.selected_districts)}: {district}")
+                
+                # Session break setiap 3 kecamatan
+                if district_index > 0 and district_index % 3 == 0:
+                    self.simulate_session_break()
+                
+                # Scrape dengan keyword yang dipilih
+                await self.scrape_district_with_selected_keywords(district)
+                
+                # Simpan progress setelah setiap kecamatan
+                self.data_manager.save_to_files()
+                stats = self.data_manager.get_stats()
+                print(f"💾 Progress tersimpan - Total: {stats['total']} infrastruktur")
+                
+                # Delay antar kecamatan
+                if district_index < len(self.selected_districts) - 1:
+                    delay = random.uniform(
+                        SCRAPING_CONFIG["delay_between_districts"],
+                        SCRAPING_CONFIG["delay_between_districts"] + 10
+                    )
+                    print(f"🏖️  Istirahat antar kecamatan ({delay:.1f}s)...")
+                    time.sleep(delay)
+                
+            except Exception as e:
+                print(f"❌ Error kecamatan {district}: {e}")
+                continue
+        
+        # Summary akhir
+        total_time = time.time() - start_time
+        final_stats = self.data_manager.get_stats()
+        
+        print("\n" + "=" * 60)
+        print("🎉 SCRAPING SELESAI!")
+        print(f"⏰ Total waktu: {total_time/3600:.1f} jam")
+        print(f"📊 Total infrastruktur: {final_stats['total']}")
+        print("\n📈 Distribusi per kecamatan:")
+        for district, count in final_stats['by_district'].items():
+            print(f"   {district}: {count} infrastruktur")
+        
+        print("\n🏗️  Distribusi per jenis infrastruktur:")
+        for keyword, count in final_stats['by_keyword'].items():
+            print(f"   {keyword}: {count} infrastruktur")
+    
+    async def scrape_district_with_selected_keywords(self, district):
+        """Scrape kecamatan dengan keyword yang dipilih user"""
+        print(f"\n🌍 Memulai scraping kecamatan: {district}")
+        
+        for keyword_index, keyword in enumerate(self.selected_keywords):
+            try:
+                print(f"\n🔍 Keyword {keyword_index + 1}/{len(self.selected_keywords)}: {keyword}")
+                
+                # Lakukan pencarian
+                if await self.search_infrastructure(keyword, district):
+                    # Extract data infrastruktur
+                    results = await self.extract_infrastructure_data(keyword, district)
+                    
+                    # Results sudah ditambahkan di extract_infrastructure_data
+                    print(f"✅ Proses keyword '{keyword}' selesai")
+                else:
+                    print(f"❌ Pencarian gagal untuk {keyword}")
+            
+            except Exception as e:
+                print(f"❌ Error keyword {keyword}: {e}")
+                continue
+    
+        print(f"🎯 Selesai scraping kecamatan: {district}")

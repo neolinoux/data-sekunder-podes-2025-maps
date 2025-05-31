@@ -1,47 +1,36 @@
 import asyncio
 import sys
 from scraper import GoogleMapsInfrastructureScraper
-from config import DISTRICTS, KEYWORDS
+from selector import get_user_selection
 
 async def main():
-    """Main function untuk menjalankan scraping"""
+    """Main function untuk menjalankan scraping dengan pilihan user"""
     
-    print("🏗️  SCRAPER INFRASTRUKTUR KABUPATEN ENREKANG")
-    print("=" * 50)
-    print(f"📍 Target kecamatan: {len(DISTRICTS)}")
-    print(f"🔍 Jenis infrastruktur: {len(KEYWORDS)}")
-    print(f"📊 Total pencarian: {len(DISTRICTS) * len(KEYWORDS)}")
-    print("\n🎯 Kecamatan yang akan di-scrape:")
-    for i, district in enumerate(DISTRICTS, 1):
-        print(f"   {i:2d}. {district}")
-    
-    print("\n🏗️  Infrastruktur yang akan dicari:")
-    for i, keyword in enumerate(KEYWORDS, 1):
-        print(f"   {i:2d}. {keyword}")
-    
-    print("\n" + "=" * 50)
-    
-    # Konfirmasi
     try:
-        confirm = input("\n🤖 Apakah Anda ingin memulai scraping? (y/n): ").lower().strip()
+        # Dapatkan pilihan user
+        selection = get_user_selection()
         
-        if confirm != 'y':
-            print("❌ Scraping dibatalkan")
+        if not selection:
+            print("👋 Terima kasih telah menggunakan scraper!")
             return
         
-    except KeyboardInterrupt:
-        print("\n❌ Scraping dibatalkan")
-        return
-    
-    # Inisialisasi scraper
-    scraper = None
-    
-    try:
-        print("\n🚀 Memulai scraping...")
+        # Extract pilihan
+        selected_keywords = selection["keywords"]
+        selected_districts = selection["districts"]
+        scraping_mode = selection["mode"]
+        
+        print(f"\n🚀 Memulai scraping mode '{scraping_mode}'...")
+        print(f"📊 Target: {len(selected_districts)} kecamatan × {len(selected_keywords)} infrastruktur")
+        
+        # Inisialisasi scraper
         scraper = GoogleMapsInfrastructureScraper()
         
-        # Jalankan scraping
-        await scraper.scrape_all_districts()
+        # Update scraper dengan pilihan user
+        scraper.selected_keywords = selected_keywords
+        scraper.selected_districts = selected_districts
+        
+        # Jalankan scraping dengan pilihan user
+        await scraper.scrape_selected_infrastructure()
         
         print("\n🎉 Scraping berhasil diselesaikan!")
         
@@ -53,7 +42,7 @@ async def main():
         
     finally:
         # Pastikan browser ditutup
-        if scraper:
+        if 'scraper' in locals() and scraper:
             scraper.close()
         
         print("\n👋 Terima kasih telah menggunakan scraper!")

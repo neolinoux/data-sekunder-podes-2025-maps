@@ -14,34 +14,76 @@ DISTRICTS = [
     "Baroko"
 ]
 
-# Keywords infrastruktur yang bisa dikustomisasi
-KEYWORDS = [
-  "rumah sakit",
-  "puskesmas",
-  "taman kanak-kanak",
-  "raudhatul athfal",
-  "sekolah dasar",
-  "madrasah ibtidaiyah",
-  "sekolah menengah pertama",
-  "madrasah tsanawiyah",
-  "sekolah menengah atas",
-  "madrasah aliyah",
-  "sekolah menengah kejuruan",
-  "universitas",
-  "akademi",
-  "politeknik",
-  "klinik",
-  "puskesmas",
-  "praktik dokter",
-  "praktik bidan",
-  "apotek",
-  "bank",
-  "toko",
-  "pasar",
-  "minimarket",
-  "supermarket",
-  "hotel",
-]
+# Keywords infrastruktur dikategorikan untuk memudah pilihan
+INFRASTRUCTURE_CATEGORIES = {
+    "kesehatan": [
+        "rumah sakit",
+        "puskesmas", 
+        "klinik",
+        "praktik dokter",
+        "praktik bidan",
+        "apotek"
+    ],
+    "pendidikan": [
+        "taman kanak-kanak",
+        "raudhatul athfal",
+        "sekolah dasar",
+        "madrasah ibtidaiyah",
+        "sekolah menengah pertama",
+        "madrasah tsanawiyah",
+        "sekolah menengah atas",
+        "madrasah aliyah",
+        "sekolah menengah kejuruan",
+        "universitas",
+        "akademi",
+        "politeknik"
+    ],
+    "ekonomi": [
+        "bank",
+        "toko",
+        "pasar",
+        "minimarket",
+        "supermarket"
+    ],
+    "pariwisata": [
+        "hotel",
+        "penginapan",
+        "objek wisata",
+        "restoran",
+        "cafe"
+    ],
+    "ibadah": [
+        "masjid",
+        "musholla",
+        "gereja",
+        "pura",
+        "vihara"
+    ],
+    "pemerintahan": [
+        "kantor desa",
+        "kantor kecamatan",
+        "kantor bupati",
+        "kantor camat",
+        "balai desa"
+    ],
+    "transportasi": [
+        "terminal",
+        "stasiun",
+        "bandara",
+        "pelabuhan"
+    ],
+    "keamanan": [
+        "polsek",
+        "koramil",
+        "pos polisi",
+        "pemadam kebakaran"
+    ]
+}
+
+# Gabungan semua keywords untuk scraping lengkap
+ALL_KEYWORDS = []
+for category_keywords in INFRASTRUCTURE_CATEGORIES.values():
+    ALL_KEYWORDS.extend(category_keywords)
 
 # Konfigurasi scraping
 SCRAPING_CONFIG = {
